@@ -1,0 +1,281 @@
+```{r}
+library(tidyverse)
+library(lubridate)
+
+library(rsample)
+library(caret)
+library(yardstick)
+
+library(spotifyr)
+
+library(rvest)
+
+library(extrafont)
+
+theme_my_axios <- function(...) {
+    theme_minimal() +
+    theme(
+      text = element_text(family = "Roboto Mono"),
+      panel.grid.major.x = element_blank() ,
+      panel.grid.major.y = element_line(),  # (size=.1, color="grey" )
+      plot.title = element_text(color = "#333333"),
+      plot.subtitle =  element_text(color = "#737373"),
+      plot.caption = element_text(color = "#737373"),
+      axis.title.x = element_text(color = "#737373"),
+      axis.title.y = element_text(color = "#737373"),
+      axis.text = element_text(color = "#737373"),
+      legend.text = element_text(color = "#737373")
+      #legend.position="none"
+      )  
+}
+
+save_chart <- function(name, graphic){
+  ggsave(gsub(" ", '', paste(getwd(), "/", name ,".svg")), graphic, height = 7, width = 10)
+}
+
+save_chart_map <- function(name, graphic){
+  ggsave(gsub(" ", '', paste(getwd(), "/", name ,".svg")), graphic, height = 7, width = 14)
+}
+
+filter_grep <- function(phrase, variable){
+  filter(grepl(phrase, variable))
+}
+
+options(scipen=10000)
+
+setwd(getwd())
+```
+
+```{r}
+# Prep Spotify API
+Sys.setenv(SPOTIFY_CLIENT_ID ="2bdad490340e47758d4de30de32782a2")
+Sys.setenv(SPOTIFY_CLIENT_SECRET ="716fee9a90fc4aa180a0660fca8bc294")
+
+access_token <- get_spotify_access_token()
+```
+
+```{r}
+page <- "https://pitchfork.com/features/lists-and-guides/the-200-best-songs-of-the-2010s/"
+
+rank <- page %>%
+  read_html() %>%
+  html_nodes("h3") %>%
+  html_text()
+
+name <- page %>%
+  read_html() %>%
+  html_nodes("h2") %>%
+  html_text()
+```
+
+```{r}
+tibble(
+  Name = name,
+  Rank = rank
+) -> pitchForkData
+
+pitchForkData %>%
+  separate(Name, c("Artist", "Song"), sep = ":") -> pitchForkData
+```
+
+Error is with Rosalia
+
+```{r}
+pitchForkData %>%
+  unnest(year) %>%
+  mutate(year = as.integer(year)) %>%
+  drop_na() %>%
+  rename(Year = year) -> PitchforkData2
+```
+```{r}
+write_excel_csv(PitchforkData2, "Pitchfork.csv")
+```
+
+```{r}
+read_csv("Pitchfork.csv") -> PitchforkClean
+PitchforkClean$Song <- gsub("\\s*\\([^\\)]+\\)","",as.character(PitchforkClean$Song))
+
+PitchforkClean <- PitchforkClean %>% rowid_to_column(., "ID")
+```
+
+
+# Analysis
+
+```{r}
+pitchForkData %>%
+  mutate(Artist = as_factor(Artist)) %>%
+  group_by(Artist) %>%
+  count() %>%
+  arrange(-n) %>%
+  head(10) %>%
+    ggplot(aes(fct_reorder(Artist, n), n)) + 
+    geom_col(fill = "#d8131b") + 
+    coord_flip() +
+    theme_my_axios() + labs(
+      x = "Artist",
+      y = "Count",
+      title = "Most Common Listed Artists",
+      subtitle = "Source: Pitchfork",
+      caption = "@LarsESchonander"
+    )
+```
+
+To Get images for a *idea*
+
+```{r}
+artists_names <- c("Drake", "Rihanna", "Beyoncé" , "Kanye West", "Frank Ocean", "Kendrick Lamar", "Robyn", "Nicki Minaj", "Future", "Tame Impala")
+
+artists_names %>%
+  map(., ~ search_spotify(., type = c("artist"))) %>%
+    reduce(bind_rows) %>%
+    filter(name %in% artists_names) %>%
+  filter(popularity > 60) %>%
+  unnest(images) %>%
+  filter(height == 160)
+```
+
+
+```{r}
+PitchforkData2 %>%
+  mutate(Year = as_factor(Year)) %>%
+  group_by(Year) %>%
+  count() %>%
+  ggplot(aes(Year, n, group = 1)) + geom_line() + theme_my_axios()
+```
+
+
+```{r}
+PitchforkClean$Song %>%
+map(.,  ~ search_spotify(q = ., limit = 1, type = c("track"))) %>%
+  compact() %>%
+  reduce(bind_rows) -> spotify_data
+```
+
+```{r}
+spotify_data %>%
+  rename(Song = name) %>%
+  select(Song, duration_ms, explicit, popularity, track_number, artists) %>%
+  unnest(artists) %>%
+  select(Song, duration_ms, explicit, popularity, track_number, name) %>%
+  rename(Artist = name) -> selected_data
+```
+
+```{r}
+PitchforkClean %>%
+  left_join(., selected_data, by = "Song") -> remnant
+```
+
+```{r}
+remnant %>%
+  drop_na() %>%
+  filter(Year == 2011) %>%
+  arrange(-popularity)
+# Super Bass, Believer, Feels Like We Only Go Backwards, Royals, No Type, Hotline Bling, Formation, Mask Off, thank u, next, The greatest 
+```
+
+
+```{r}
+remnant %>%
+  drop_na() %>%
+  ggplot(aes(popularity)) + geom_histogram() + theme_my_axios()
+```
+
+```{r}
+remnant %>%
+  drop_na() %>%
+  group_by(Year) %>%
+  summarise(
+    "Most Popular Song" = max(popularity)
+  ) 
+```
+
+```{r}
+remnant %>%
+  subset(Song %in% c("Super Bass", "Believer", "Feels Like We Only Go Backwards", "Royals", "No Type", "Hotline Bling", "Formation", "Mask Off", "thank u, next", "The greatest")) %>%
+  mutate(Year = as_factor(Year)) %>%
+    ggplot(aes(Year, popularity)) + geom_point() + theme_my_axios() -> base
+
+save_chart("Base", base)
+```
+
+```{r}
+c("Super Bass", "Believer", "Feels Like We Only Go Backwards", "Royals", "No Type", "Hotline Bling", "Formation", "Mask Off", "thank u, next", "The greatest") %>%
+  map(., ~ search_spotify(., type = c("track"))) %>%
+  reduce(bind_rows) %>%
+  subset(popularity %in% c(70,88, 75, 78, 75, 77, 77, 81, 88, 77)) %>%
+  select(popularity, artists, album.images) %>%
+  unnest(artists) %>%
+  subset(name %in% c("Nicki Minaj","Imagine Dragons","Tame Impala", "Lorde", "Rae Sremmurd", "Drake", "Beyoncé", "Future" ,"Ariana Grande" ,"Lana Del Rey")) %>% unnest(album.images) %>%
+  filter(height == 64) %>%
+  select(popularity,name,url)
+```
+
+```{r}
+unique(data$name)
+```
+
+...
+
+Looking at the top and bottom most songs per year
+
+```{r}
+PitchforkClean %>%
+  group_by(Year) %>%
+  summarise(
+    `Max Rank` = max(Rank),
+    `Min Rank` = min(Rank),
+    `Range` = `Max Rank` - `Min Rank`
+  )
+```
+
+```{r}
+(PitchforkClean %>%
+  mutate(Year = as_factor(Year)) %>%
+  group_by(Year) %>%
+  summarise(
+    `Max Rank` = max(Rank),
+    `Min Rank` = min(Rank),
+    `Range` = `Max Rank` - `Min Rank`
+  ) %>% 
+    ggplot(aes(Year, `Min Rank`)) + geom_point() + theme_my_axios() + labs(
+      x = "Year",
+      y = "Rank",
+      title = "Best Rank per Year",
+      subtitle = "Source: Pitchfork"
+    ) -> rank_plot)
+
+# save_chart("RankPlot", rank_plot)
+```
+
+
+```{r}
+PitchforkClean %>%
+  filter(Rank == 1 | Rank ==  2 | Rank == 3 | Rank == 4 | Rank == 6 | Rank == 10  | Rank == 16 
+          | Rank == 19  | Rank == 25  | Rank == 34) %>% arrange(Year) 
+```
+
+```{r}
+PitchforkClean %>%
+  filter(Rank == 1 | Rank ==  2 | Rank == 3 | Rank == 4 | Rank == 6 | Rank == 10  | Rank == 16 
+          | Rank == 19  | Rank == 25  | Rank == 34) %>%
+  .$Artist -> artist_rank
+```
+
+
+```{r}
+PitchforkClean %>%
+  filter(Rank == 1 | Rank ==  2 | Rank == 3 | Rank == 4 | Rank == 6 | Rank == 10  | Rank == 16 
+          | Rank == 19  | Rank == 25  | Rank == 34) %>% arrange(-Year) %>%
+  .$Song %>%
+  map(., ~ search_spotify(., type = c("track"))) %>%
+  compact() %>%
+  reduce(bind_rows) %>%
+  select(artists, name, album.images) %>%
+  rename(Song = name) %>%
+  unnest(artists) %>%
+  subset(name %in% artist_rank)  %>% 
+  unnest(album.images) %>%
+  filter(height == 64) %>%
+  select(Song, name, url)
+```
+
