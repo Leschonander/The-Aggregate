@@ -1,0 +1,74 @@
+<html>
+    <head>
+        <script src="http://d3js.org/d3.v4.js"></script>
+        <style type="text/css">
+       
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>Trump Spending By State & Purpose</h1>
+        </header>
+        <summary>
+        </summary>
+
+<script type="text/javascript">
+
+const margin = {top: 10, right: 30, bottom: 20, left: 50},
+    width = 460 - margin.left - margin.right,
+    height = 400 - margin.top - margin.bottom;
+
+let svg = d3.select("summary")
+    .append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+  .append("g")
+        .attr("transform",
+          "translate(" + margin.left + "," + margin.top + ")");
+d3.csv("tSpendgroup.csv", function(data) {
+    const subgroups = data.columns.slice(1)
+
+    let groups = d3.map(data, function(d){return(d.state)}).keys()
+
+    const x = d3.scaleBand()
+      .domain(groups)
+      .range([0, width])
+      .padding([0.2])
+  svg.append("g")
+    .attr("transform", "translate(0," + height + ")")
+    .call(d3.axisBottom(x).tickSizeOuter(0));
+
+
+    const y = d3.scaleLinear()
+        .domain([0, 750])
+        .range([ height, 0 ]);
+    svg.append("g")
+        .call(d3.axisLeft(y));
+
+    const color = d3.scaleOrdinal()
+        .domain(subgroups)
+        .range(['#4fcfb3','#fe4c4c','#f0db4f'])
+
+    const stackedData = d3.stack()
+    .keys(subgroups)
+    (data)
+
+    // bars
+    svg.append("g")
+    .selectAll("g")
+    .data(stackedData)
+    .enter()
+    .append("g")
+    .attr("fill", function(d) { return color(d.key); })
+      .selectAll("rect") // rect
+      // enter a second time = loop subgroup per subgroup to add all rectangles
+      .data(function(d) { return d; })
+      .enter().append("rect") // rect
+        .attr("x", function(d) { return x(d.data.state); })
+        .attr("y", function(d) { return y(d[1]); })
+        .attr("height", function(d) { return y(d[0]) - y(d[1]); })
+        .attr("width", x.bandwidth())
+        .attr("stroke", "grey") 
+})
+</script>
+</body>

@@ -1,0 +1,151 @@
+```{r}
+library(tidyverse)
+library(lubridate)
+library(extrafont)
+library(svglite)
+```
+
+```{r}
+theme_my_axios <- function(...) {
+    theme_minimal() +
+    theme(
+      text = element_text(family = "Roboto Mono"),
+      panel.grid.major.x = element_blank() ,
+      panel.grid.major.y = element_line(),  # (size=.1, color="grey" )
+      #plot.background = element_rect(color = "#e3e9f2"),
+      plot.title = element_text(color = "#333333"),
+      plot.subtitle =  element_text(color = "#737373"),
+      plot.caption = element_text(color = "#737373"),
+      axis.title.x = element_text(color = "#737373"),
+      axis.title.y = element_text(color = "#737373"),
+      axis.text = element_text(color = "#737373"),
+      legend.position="none")  
+}
+options(scipen=10000)
+```
+
+
+```{r}
+trump_spending <- read_csv("propublica_trump_spending-1.csv")
+```
+
+```{r}
+head(trump_spending)
+```
+
+```{r}
+unique(trump_spending$purpose_scrubbed)
+```
+
+```{r}
+trump_spending <- trump_spending %>%
+  mutate(
+     date = mdy(date),
+     MONTH = month(date),
+     YEAR = year(date)
+  )
+```
+
+```{r}
+trump_spending %>%
+  group_by(source) %>%
+  summarise(totalSpending = sum(amount)) %>%
+  arrange(-totalSpending)
+```
+
+```{r}
+trump_spending_by_state <- trump_spending %>%
+  group_by(state) %>%
+  summarise(
+    total = sum(amount,na.rm = TRUE),
+    median = median(amount,na.rm = TRUE),
+    mean = mean(amount,na.rm = TRUE),
+    max = max(amount,na.rm = TRUE),
+    min = min(amount,na.rm = TRUE)
+  ) %>%
+  filter(state != "Ireland", state != "Scotland", state != "Panama",state != "British Columbia") 
+```
+
+```{r}
+(trump_spending %>%
+  group_by(state, purpose) %>%
+  filter(!is.na(state), !is.na(purpose)) %>%
+  summarise(total = sum(amount, na.rm = TRUE)) -> trump_spending_by_state_purpose)
+```
+
+```{r}
+trump_spending %>%
+  group_by(state, purpose_scrubbed) %>%
+  filter(!is.na(state), !is.na(purpose)) %>%
+  summarise(total = sum(amount), median = median(amount)) %>%
+  arrange(-total) %>%
+  head(5) %>%
+  ggplot(aes(x = purpose_scrubbed, y = median)) + geom_bar(stat = "identity", fill = "#da1333") +
+  theme_my_axios() +
+  facet_wrap(~state) +
+  labs(
+    x = "Purpose",
+    y = "Amount",
+    title = "Top 5 Median Spending Based on Purpose and State",
+    subtitle = "Source: ProPublica",
+    caption = "@LarsESchonander"
+  ) 
+```
+
+
+```{r}
+trump_spending %>%
+  group_by(source) %>%
+  summarise(total = sum(amount)) %>%
+  arrange(-total) %>%
+  head()
+```
+
+```{r}
+(trump_spending %>%
+  filter(source == "Donald J. Trump for President, Inc.") %>%
+  ggplot(aes(x = purpose_scrubbed, y = amount)) + geom_bar(stat = "identity", fill = "#da1333") +
+  theme_my_axios() +
+  labs(
+    x = "Purpose",
+    y = "Amount",
+    title = "Donald Trump's Spending Based on Purpose",
+    subtitle = "Source: ProPublica",
+    caption = "@LarsESchonander"
+  ) -> purpose_chart )
+```
+
+```{r}
+trump_spending_by_state %>%
+  ggplot(aes(state, total)) + geom_bar(stat = "identity", fill = "#da1333") +
+  theme_my_axios()
+```
+
+```{r}
+trump_spending %>%
+  group_by(source) %>%
+  summarise(totalSpending = sum(amount)) %>%
+  arrange(-totalSpending) %>%
+  head(10) %>%
+  ggplot(aes(x = totalSpending)) + geom_histogram(fill = "#da1333") +
+  theme_my_axios()
+```
+
+```{r}
+trump_spending %>%
+  group_by(purpose_scrubbed) %>%
+  ggplot(aes(x = date, y = amount)) + geom_step(color = "#da1333") +
+  facet_wrap(~purpose_scrubbed) + theme_my_axios() +
+  labs(
+    x = "Date",
+    y = "Amount of Spending",
+    title = "Donald Trump's Spending Based on Purpose",
+    subtitle = "Source: ProPublica",
+    caption = "@LarsESchonander"
+  ) -> plot
+```
+
+```{r}
+
+```
+
