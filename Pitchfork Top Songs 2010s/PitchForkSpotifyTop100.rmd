@@ -48,8 +48,8 @@ setwd(getwd())
 
 ```{r}
 # Prep Spotify API
-Sys.setenv(SPOTIFY_CLIENT_ID ="2bdad490340e47758d4de30de32782a2")
-Sys.setenv(SPOTIFY_CLIENT_SECRET ="716fee9a90fc4aa180a0660fca8bc294")
+Sys.setenv(SPOTIFY_CLIENT_ID ="")
+Sys.setenv(SPOTIFY_CLIENT_SECRET ="")
 
 access_token <- get_spotify_access_token()
 ```
