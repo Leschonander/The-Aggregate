@@ -1,0 +1,421 @@
+```{r}
+library(tidyverse)
+library(lubridate)
+library(rvest)
+library(furrr)
+library(ggmap)
+library(sf)
+
+library(extrafont)
+
+
+#' Theme for maps that look like the ones Axios makes. 
+#'
+#' @author Lars Erik Schonander
+theme_my_axios <- function(...) {
+    theme_minimal() +
+    theme(
+      text = element_text(family = "Roboto Mono"),
+      panel.grid.major.x = element_blank() ,
+      panel.grid.major.y = element_line(),  # (size=.1, color="grey" )
+      plot.title = element_text(color = "#333333"),
+      plot.subtitle =  element_text(color = "#737373"),
+      plot.caption = element_text(color = "#737373"),
+      axis.title.x = element_text(color = "#737373"),
+      axis.title.y = element_text(color = "#737373"),
+      axis.text = element_text(color = "#737373"),
+      legend.text = element_text(color = "#737373")
+      #legend.position="none"
+      )  
+}
+
+
+save_chart <- function(name, graphic){
+  ggsave(gsub(" ", '', paste(getwd(), "/", name ,".svg")), graphic, height = 7, width = 10)
+}
+
+options(scipen=10000)
+
+setwd(getwd())
+
+ggmap::register_google(key = "AIzaSyD2uVjemfhdjX3f4DsMduMq06vEa6k870k")
+```
+
+```{r}
+"http://web.mta.info/developers/turnstile.html" %>%
+  read_html() %>%
+  html_nodes(css = ".span-84") %>%
+  html_nodes("a") %>%
+  html_attr('href') -> links
+
+"http://web.mta.info/developers/turnstile.html" %>%
+  read_html() %>%
+  html_nodes(css = ".span-84") %>%
+  html_nodes("a") %>%
+  html_text() -> name
+
+tibble(
+  Name = name,
+  Link = links
+) %>%
+  mutate(
+    Link = paste("http://web.mta.info/developers/", Link, sep = ""),
+    Date =  parse_date_time(x = Name, c("mdy"))
+  ) -> TurnstileData
+```
+
+```{r}
+TurnstileData %>%
+  filter(Date > as_date("2017-12-28"))
+```
+
+# Sample Analysis
+
+```{r}
+TurnstileData$Link[1] %>%
+  read_csv() %>%
+  filter(DESC == "REGULAR") -> `Sample 21st`
+```
+
+```{r}
+`Sample 21st` %>%
+  mutate(
+    ENTRIES = as.numeric(ENTRIES),
+    EXITS = as.numeric(EXITS),
+    `Entry Dif` = ENTRIES - lag(ENTRIES),
+    `Exit Dif` = EXITS - lag(EXITS)
+  ) %>%
+  filter(`Exit Dif` > 0) %>%
+  filter(`Entry Dif` > 0) -> `Sample 21st`
+```
+
+```{r}
+stations <- unique(`Sample 21st`$STATION)
+```
+
+
+```{r}
+`Sample 21st` %>%
+  group_by(STATION, DATE) %>%
+  summarise(
+    `Total Entries` = sum(`Entry Dif`),
+    `Total Exits` = sum(`Exit Dif`)
+  ) %>%
+  filter(`Total Entries` < 100000) %>%
+  mutate(
+    `Entries to Exits` = `Total Entries` / `Total Exits`
+  ) -> SampleSummary
+```
+
+```{r}
+SampleSummary %>%
+  mutate(Date = mdy(DATE)) %>%
+    filter(DATE > "12/15/2019") %>%
+    ggplot(aes(Date, `Total Exits`, color = STATION)) +
+    geom_line() +
+    theme_my_axios() +
+    theme(legend.position = "none") + labs(
+      x = "Day",
+      y = "Exits",
+      title = "Exits from Dec-16 to Dec 20th 2019",
+      subtitle = "Source: MTA",
+      caption = "@LarsESchonander"
+    )
+```
+
+
+# Big Data
+
+```{r Size of the entire data pre proccessed}
+nrow(`Sample 21st`) * 503
+```
+
+```{r Size of the dataset when summerized}
+nrow(SampleSummary) * 503
+```
+
+```{r Time for one}
+plan(multiprocess)
+
+# tic()
+TurnstileData %>%
+  head(1) %>%
+  .[[2]] %>%
+  future_map_dfr(~data.table::fread(.)) 
+# toc()
+
+```
+
+4.56 seconds to look at one
+
+```{r Faster with Furr and fread??}
+plan(multiprocess)
+
+TurnstileData %>%
+  head() %>%
+  .[[2]] %>%
+  future_map_dfr(~data.table::fread(.)) 
+```
+
+```{r But how much time?}
+plan(multiprocess)
+
+TurnstileData %>%
+  head() %>%
+  .[[2]] %>%
+  future_map_dfr(~data.table::fread(.))  
+```
+
+21.09 seconds to open 10 of each of the dataframes.
+data.table::fread cuts the time to read 10 CSV files in half.
+
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), "MTATurnStile.db")
+```
+
+```{r Loading the data into SQLITE}
+plan(multiprocess)
+
+TurnstileData %>%
+  head() %>%
+  .[[2]] %>%
+  future_map_dfr(~data.table::fread(.)) %>%
+  dbWriteTable(conn, "HeadData", .)
+```
+
+```{r}
+MTA_BigData <- tbl(conn, "HeadData")
+MTA_BigData 
+```
+
+```{r}
+MTA_BigData_CSV <- read_csv("HeadData.csv")
+```
+
+```{r}
+MTA_BigData_CSV %>%
+  mutate(
+    `Entry Dif` = ENTRIES - lag(ENTRIES),
+    `Exit Dif` = EXITS - lag(EXITS)
+  ) %>%
+  filter(`Exit Dif` > 0) %>%
+  filter(`Entry Dif` > 0) %>%
+  group_by(STATION, DATE) %>%
+  summarise(
+    `Total Entries` = sum(`Entry Dif`),
+    `Total Exits` = sum(`Exit Dif`)
+  ) %>%
+  filter(`Total Entries` < 100000) %>%
+  mutate(
+    `Entries to Exits` = `Total Entries` / `Total Exits`
+  ) -> MTA_BigData_CSV_Summary
+  
+```
+
+```{r}
+MTA_BigData_CSV_Summary %>%
+  mutate(
+    DATE = mdy(DATE)
+  ) %>%
+  subset(STATION %in% c("TIMES SQ-42 ST")) %>%
+    ggplot(aes(DATE, `Total Exits`, color = STATION)) +
+    geom_line() +
+    theme_my_axios()
+```
+
+# Weekday Analysis
+
+```{r}
+MTA_BigData_CSV_Summary %>%
+  mutate(
+    DATE = mdy(DATE),
+    Weekday = weekdays(DATE)
+  ) %>%
+  group_by(Weekday) %>%
+  summarise(
+    `Total Entries` = sum(`Total Entries`),
+    `Total Exits` = sum(`Total Exits`)
+  )
+```
+
+```{r}
+MTA_BigData_CSV_Summary %>%
+  mutate(
+    DATE = mdy(DATE),
+    Weekday = weekdays(DATE)
+  ) %>%
+  group_by(STATION, Weekday) %>%
+  summarise(
+    `Total Entries` = sum(`Total Entries`),
+    `Total Exits` = sum(`Total Exits`)
+  ) %>%
+  filter(Weekday == "Sunday") %>%
+  arrange(`Total Entries`)
+```
+
+```{r}
+MTA_BigData_CSV_Summary %>%
+  mutate(
+    DATE = mdy(DATE),
+    Weekday = weekdays(DATE)
+  ) %>%
+  group_by(STATION, Weekday) %>%
+  summarise(
+    `Total Entries` = sum(`Total Entries`),
+    `Total Exits` = sum(`Total Exits`)
+  ) %>%
+  filter(Weekday == "Sunday") %>%
+  arrange(`Total Entries`) %>%
+  head(10) %>% mutate(Activity = "Bottom Ten") -> MinSunday
+
+MTA_BigData_CSV_Summary %>%
+  mutate(
+    DATE = mdy(DATE),
+    Weekday = weekdays(DATE)
+  ) %>%
+  group_by(STATION, Weekday) %>%
+  summarise(
+    `Total Entries` = sum(`Total Entries`),
+    `Total Exits` = sum(`Total Exits`)
+  ) %>%
+  filter(Weekday == "Sunday") %>%
+  arrange(-`Total Entries`) %>%
+  head(10) %>% mutate(Activity = "Top Ten") %>%
+  rbind(., MinSunday) -> TopLowSunday
+```
+
+```{r}
+(TopLowSunday %>%
+  ungroup(STATION) %>%
+  mutate(STATION = as_factor(STATION)) %>%
+    ggplot(aes(fct_reorder(STATION, `Total Entries`),  `Total Entries`)) + 
+    geom_col(fill = "steelblue") +
+    theme_my_axios() +
+    facet_wrap(~Activity) + coord_flip() + labs(
+      x = "Station",
+      y = "Entries",
+      title = "Most and Least Active Subway Stations on Sunday (Nov-Dec 2019)",
+      subtitle = "Source: MTA",
+      caption = "@LarsESchonander"
+    ) -> top_stations)
+save_chart("TopStations", top_stations)
+```
+
+```{r}
+(MTA_BigData_CSV_Summary  %>%
+  subset(STATION %in% c("TIMES SQ-42 ST")) %>%
+  mutate(Date = mdy(DATE)) %>%
+    ggplot(aes(Date, `Total Exits`)) +
+    geom_line(color = "darkslategrey") +
+    geom_point(size = 2, color = "steelblue") +
+    theme_my_axios() +
+    coord_polar() + labs(
+      x = "Station",
+      y = "Entries",
+      title = "Activity of Times Square 42nd Street (Nov-Dec 2019)",
+      subtitle = "Source: MTA",
+      caption = "@LarsESchonander"
+    ) -> polar_transit)
+
+save_chart("PolarTransit", polar_transit)
+```
+
+
+# Merging Station Summaries with Lat & Long Data
+
+```{r}
+as.data.frame(stations) %>%
+  mutate(stations = as.character(stations)) %>%
+  mutate_geocode(., stations) -> Stations_Geocoded
+```
+
+```{r}
+# write_csv(Stations_Geocoded, "StationsGeocoded.csv")
+```
+
+
+```{r}
+MTA_BigData_CSV_Summary %>%
+  rename(stations = STATION) %>%
+  left_join(., Stations_Geocoded, by = "stations") -> MTA_BigData_CSV_Summary_geocoded
+```
+
+```{r}
+NYC_Areas <- read_sf("./Neighborhood Tabulation Areas (NTA)/geo_export_0770f63c-57d1-46bd-a9dd-ce3e7f004ea4.shp")
+```
+
+```{r}
+NYC_Areas %>% plot()
+```
+Proper CRS...
+
+```{r}
+MTA_BigData_CSV_Summary_geocoded %>%
+  drop_na() %>%
+  st_as_sf(., coords = c("lon", "lat"), crs = 4326) -> MTA_BigData_CSV_Summary_geocoded_sf
+MTA_BigData_CSV_Summary_geocoded_sf %>%
+  st_transform("+proj=longlat +ellps=WGS84 +no_defs") -> MTA_BigData_CSV_Summary_geocoded_sf
+```
+
+```{r Looking at Station Exits by Area...}
+st_join(NYC_Areas, MTA_BigData_CSV_Summary_geocoded_sf) %>%
+  drop_na() %>%
+  filter(DATE == "11/20/2019") %>%
+  group_by(ntaname) %>%
+  summarise(
+    `Total Entries` = sum(`Total Entries`),
+    `Total Exits` = sum(`Total Exits`)
+  ) %>%
+  left_join(., NYC_Areas, by = "ntaname") %>%
+  st_as_sf() -> station_shapefile_totals20
+```
+
+
+```{r}
+ggplot() +
+  geom_sf(data = station_shapefile_totals20, aes(fill = `Total Entries`)) + theme_my_axios()
+```
+
+```{r}
+st_join(NYC_Areas, MTA_BigData_CSV_Summary_geocoded_sf) %>%
+  drop_na() %>%
+  mutate(DATE = mdy(DATE)) %>%
+  filter(DATE > "2019-12-14")  %>%
+  group_by(ntaname, DATE) %>%
+  summarise(
+    `Total Entries` = sum(`Total Entries`),
+    `Total Exits` = sum(`Total Exits`)
+  ) %>%
+  left_join(., NYC_Areas, by = "ntaname") %>%
+  st_as_sf() -> station_shapefile_totalsAWeek
+
+(ggplot() +
+  geom_sf(data = station_shapefile_totalsAWeek, aes(fill = `Total Entries`)) + theme_my_axios() +
+  facet_wrap(~DATE) +  scale_fill_gradient2(midpoint = 13,
+                       low = '#FEF5EC',
+                       mid = '#F7921E',
+                       high = '#802A07',
+                       na.value = 'white',
+                       name = 'Station Count') +
+  theme_my_axios() +
+  theme(axis.title.y = element_blank(), 
+        axis.title.x = element_blank(),
+        legend.text.align = 1,
+        axis.text = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.background = element_blank(),
+    panel.grid.major = element_blank()
+        ) +
+  labs(
+    x = "",
+    y = "",
+    title = "Subway Entries (15th-20th Dec 2019)",
+    subtitle = "Source: MTA",
+    caption = "@LarsESchonander"
+  ) -> SubwayWeek)
+save_chart("SubwayWeek", SubwayWeek)
+
+
+```
+
+
